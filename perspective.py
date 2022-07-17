@@ -141,7 +141,7 @@ def binary_search(f, l, r, eps):
             l = c
     return (l + r) / 2
 
-def find_ex(f):
+def find_ex(f, coord):
     w_center = [0, 0]
     w_size = 100000.0
     iterations = int(math.log(w_size*100, 4))
@@ -158,74 +158,10 @@ def find_ex(f):
         w_size/=3
     return Point(ex[1], ex[2])
 
-def parse_args(args):
-    dsc = "Script finds tags for .ass subtitles that can map a rectangle to a given tetragon"
-    parser = argparse.ArgumentParser(description=dsc)
-
-    parser.add_argument(type=str, dest="coord", metavar="<Coordinates>",
-                        help="Coordinates of tetragon")
-    parser.add_argument("-o", "--origin", default=False,
-                        type=str, metavar="O", dest="target_origin",
-                        help="Desired origin coordinates. Coordinates for multiple origin points should be separated by semicolon.")
-    parser.add_argument("-r", "--ratio", default=False,
-                        type=str, metavar="R", dest="target_ratio",
-                        help="Output file")
-    parser.add_argument("-s", "--scale", default=1,
-                        type=float, metavar="S", dest="scale",
-                        help="Scaling factor. Simply multiples input coordinates.")
-    return parser.parse_args(args)
-
 def getfloats(s):
     return list(map(float, re.findall('[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?', s)))
 
-args = parse_args(sys.argv[1:])
-coord = getfloats(args.coord)[:8]
-coord = zip(coord[::2], coord[1::2])
-coord = list(map(Point, coord))
-target_org = args.target_origin
-scale = args.scale
-if args.target_origin:
-    target_orgs = []
-    for o in args.target_origin.split(";"):
-        target_orgs.append(Point(*getfloats(o)[:2]))
-else:
-    target_orgs = False
-if scale != 1:
-    for i in range(len(coord)):
-        coord[i] = coord[i].mul(scale)
-    if target_orgs:
-        for i in range(len(target_orgs)):
-            target_orgs[i] = target_orgs[i].mul(scale)
-if args.target_ratio:
-    target_ratio = getfloats(args.target_ratio)[0]
-else:
-    target_ratio = dist(coord[0], coord[1])/dist(coord[0], coord[3])
-
-if target_orgs:
-    print("\nTransform for target org:")
-    for target_org in target_orgs:
-        tf_tags = unrot(coord, target_org, get_rot=True)
-        if tf_tags is None:
-            print(tf_tags)
-        else:
-            print("\\org(%.1f, %.1f)\n" % (target_org.x, target_org.y) + tf_tags)
-
-mn_point = find_ex(min)
-mx_point = find_ex(max)
-c = mn_point.add(mx_point).mul(0.5)
-v = mn_point.sub(mx_point).rot_z(math.pi/2).mul(100000)
-inf_p = c.add(v)
-if unrot(coord, inf_p)>0:
-    mn_center = True
-    center = mn_point
-    other = mx_point
-else:
-    mn_center = False
-    center = mx_point
-    other = mn_point
-v = other.sub(center)
-
-def zero_on_ray(center, v, a, eps):
+def zero_on_ray(center, v, a, eps, coord):
     vrot = v.rot_z(a)
     def f(x):
         p=vrot.mul(x).add(center)
@@ -241,59 +177,116 @@ def zero_on_ray(center, v, a, eps):
     else:
         return p, ratio
 
-rots = []
-steps = 100
-for i in range(steps):
-    a = 2*math.pi*i/steps
-    zero = zero_on_ray(center, v, a, 1E-02)
-    if zero is None:
-        continue
-    p, ratio = zero
-    rots.append((ratio, p, a))
 
-if len(rots)==0:
-    print("\nNo proper perspective found.")
-    exit()
-print("\nTransforms near center of tetragon:")
-t_center = coord[0].add(coord[1]).add(coord[2]).add(coord[3]).mul(0.25)
-ratio, p, a = min(rots, key = lambda x:dist(t_center, x[1]))
-tf_tags = unrot(coord, p, get_rot=True)
-if tf_tags is None:
-    print(tf_tags)
-else:
-    print("Ratio=%f" % ratio)
-    print("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags)
-segs = []
-for i in range(len(rots)):
-    if (rots[i-1][0]-target_ratio)*(rots[i][0]-target_ratio)<=0:
-        segs.append((rots[i-1][2], rots[i][2]))
-orgs = []
-got_tf = False
-if len(segs)>0:
-    print("\nTransforms with target ratio:")
-    for seg in segs:
-        def f(a):
-            res = zero_on_ray(center, v, a, 1E-05)
-            if res is None:
-                return 1E7
+def get_perspective(args_dict):
+
+    coord = getfloats(args_dict["coord"])[:8]
+    coord = zip(coord[::2], coord[1::2])
+    coord = list(map(Point, coord))
+
+    target_org = args_dict["origin"]
+    scale = args_dict["scale"]
+
+    if args_dict["origin"]:
+        target_orgs = []
+        for o in args_dict["origin"].split(";"):
+            target_orgs.append(Point(*getfloats(o)[:2]))
+    else:
+        target_orgs = False
+    if scale != 1:
+        for i in range(len(coord)):
+            coord[i] = coord[i].mul(scale)
+        if target_orgs:
+            for i in range(len(target_orgs)):
+                target_orgs[i] = target_orgs[i].mul(scale)
+    if args_dict["ratio"]:
+        target_ratio = getfloats(args_dict["ratio"])[0]
+    else:
+        target_ratio = dist(coord[0], coord[1])/dist(coord[0], coord[3])
+
+    if target_orgs:
+        return_string = ("\nTransform for target org:")
+        for target_org in target_orgs:
+            tf_tags = unrot(coord, target_org, get_rot=True)
+            if tf_tags is None:
+                return_string += (tf_tags)
             else:
-                p, ratio = res
-                return ratio-target_ratio
-        a = binary_search(f, seg[0], seg[1], eps=1E-04)
-        if a is None:
-            a = seg[0]
-        zero = zero_on_ray(center, v, a, 1E-05)
-        if (zero is None): continue
+                return_string += ("\\org(%.1f, %.1f)\n" % (target_org.x, target_org.y) + tf_tags)
+
+    mn_point = find_ex(min, coord)
+    mx_point = find_ex(max, coord)
+    c = mn_point.add(mx_point).mul(0.5)
+    v = mn_point.sub(mx_point).rot_z(math.pi/2).mul(100000)
+    inf_p = c.add(v)
+    if unrot(coord, inf_p)>0:
+        mn_center = True
+        center = mn_point
+        other = mx_point
+    else:
+        mn_center = False
+        center = mx_point
+        other = mn_point
+    v = other.sub(center)
+
+
+    rots = []
+    return_string = ""
+    steps = 100
+    for i in range(steps):
+        a = 2*math.pi*i/steps
+        zero = zero_on_ray(center, v, a, 1E-02, coord)
+        if zero is None:
+            continue
         p, ratio = zero
-        tf_tags = unrot(coord, p, get_rot=True)
-        if tf_tags is None: continue
-        print("Ratio=%f" % ratio)
-        print("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags)
-        got_tf = True
-if not got_tf and len(rots)>0:
-    print("\nTransforms close to target ratio:")
-    ratio, p, a = min(rots, key = lambda x:abs(target_ratio - x[0]))
+        rots.append((ratio, p, a))
+
+    if len(rots)==0:
+        return_string = "No proper perspective found."
+
+    return_string = ("Transforms near center of tetragon:\n")
+    t_center = coord[0].add(coord[1]).add(coord[2]).add(coord[3]).mul(0.25)
+    ratio, p, a = min(rots, key = lambda x:dist(t_center, x[1]))
     tf_tags = unrot(coord, p, get_rot=True)
-    if tf_tags is not None:
-        print("Ratio=%f" % ratio)
-        print("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags)
+    if tf_tags is None:
+        return_string += (tf_tags) + "\n"
+    else:
+        return_string += ("Ratio=%f" % ratio) + "\n"
+        return_string += ("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags) + "\n"
+    segs = []
+    for i in range(len(rots)):
+        if (rots[i-1][0]-target_ratio)*(rots[i][0]-target_ratio)<=0:
+            segs.append((rots[i-1][2], rots[i][2]))
+    orgs = []
+    got_tf = False
+
+    if len(segs)>0:
+        return_string += ("\nTransforms with target ratio:\n")
+        for seg in segs:
+            def f(a):
+                res = zero_on_ray(center, v, a, 1E-05, coord)
+                if res is None:
+                    return 1E7
+                else:
+                    p, ratio = res
+                    return ratio-target_ratio
+            a = binary_search(f, seg[0], seg[1], eps=1E-04)
+            if a is None:
+                a = seg[0]
+            zero = zero_on_ray(center, v, a, 1E-05, coord)
+            if (zero is None): continue
+            p, ratio = zero
+            tf_tags = unrot(coord, p, get_rot=True)
+            if tf_tags is None: continue
+            return_string += ("Ratio=%f" % ratio) + "\n"
+            return_string +=("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags)
+            got_tf = True
+
+    if not got_tf and len(rots)>0:
+        return_string = ("\nTransforms close to target ratio:\n")
+        ratio, p, a = min(rots, key = lambda x:abs(target_ratio - x[0]))
+        tf_tags = unrot(coord, p, get_rot=True)
+        if tf_tags is not None:
+            return_string += ("Ratio=%f" % ratio) + "\n"
+            return_string += ("\\org(%.1f, %.1f)" % (p.x, p.y) + tf_tags)
+
+    return return_string
